@@ -32,5 +32,6 @@ env/
 # Node (后续技术开发可能用到)
 node_modules/
 dist/
-build/
 .next/
+# 注意：不要用裸 build/ 规则，会误伤 projects/opportunity-radar/build/ 立项文档目录。
+# 如需忽略前端构建产物，使用更精确的路径，例如：engine/ui/build/
