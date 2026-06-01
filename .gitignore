@@ -11,6 +11,7 @@ Thumbs.db
 # Env / secrets （信息源密钥、API key 等绝不入库）
 .env
 .env.*
+!.env.example
 *.local
 secrets/
 credentials*
@@ -20,6 +21,11 @@ credentials*
 *.log
 tmp/
 .cache/
+
+# 数据库（运行时生成，含采集数据，不入库）
+*.db
+*.sqlite
+*.sqlite3
 
 # Python (后续技术开发可能用到)
 __pycache__/
@@ -35,3 +41,6 @@ dist/
 .next/
 # 注意：不要用裸 build/ 规则，会误伤 projects/opportunity-radar/build/ 立项文档目录。
 # 如需忽略前端构建产物，使用更精确的路径，例如：engine/ui/build/
+
+# Playwright MCP 测试快照（临时产物，不入库）
+.playwright-mcp/

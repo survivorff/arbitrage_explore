@@ -1,0 +1,16 @@
+[project]
+name = "opportunity-radar-engine"
+version = "0.1.0"
+description = "机会雷达引擎 - AI赛道机会的采集、初筛、评估工作台"
+requires-python = ">=3.11"
+dependencies = [
+    "feedparser>=6.0",   # RSS 采集
+    "httpx>=0.27",       # HTTP / AI API 调用
+    "streamlit>=1.30",   # 评估工作台界面
+]
+
+[project.optional-dependencies]
+dev = []
+
+[tool.ruff]
+line-length = 100
