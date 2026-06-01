@@ -21,6 +21,10 @@ OPPORTUNITY_KEYWORDS = [
     "免费", "限免", "开源", "降价", "发布", "上线", "推出", "测试版", "公测",
     "内测", "额度", "福利", "红利", "教程", "实测", "对比", "新模型", "新功能",
     "alpha", "beta",
+    # 加密 Web3
+    "空投", "airdrop", "上线", "上币", "listing", "质押", "staking", "收益",
+    "apy", "apr", "资金费率", "funding", "套利", "arbitrage", "主网", "mainnet",
+    "快照", "snapshot", "测试网", "testnet", "积分", "points",
     # 英文
     "free", "open source", "open-source", "launch", "release", "released",
     "now available", "introducing", "announces", "announced", "price",
@@ -32,6 +36,9 @@ NOISE_KEYWORDS = [
     "招聘", "hiring", "webinar", "广告", "sponsored", "赞助",
     "live now", "我们正在招聘",
 ]
+
+# 数据类信号（来自 API 的量化机会）天然就是高相关，无需关键词判断
+DATA_SIGNAL_TYPES = {"yield", "funding", "trending", "listing"}
 
 
 def score_by_rules(title: str, content: str) -> tuple[float, list[str]]:
@@ -46,19 +53,32 @@ def score_by_rules(title: str, content: str) -> tuple[float, list[str]]:
     return score, hits
 
 
-def run_rule_filter(only_new: bool = True) -> dict:
-    """对收件箱里的信号跑规则初筛，把规则相关度写入 ai_relevance（AI 未启用时作为兜底排序依据）。
+def run_rule_filter(only_new: bool = True, track: str | None = None) -> dict:
+    """对收件箱里的信号跑规则初筛，把规则相关度写入 ai_relevance。
 
-    注意：这里不直接 filtered_out，把判断权留给人；只是给一个初步相关度。
+    - 数据类信号（yield/funding/trending）天然高相关，直接给高分。
+    - 资讯类信号按关键词打分。
+    - track 不为空时只处理该赛道。
     """
     stats = {"processed": 0, "high": 0, "low": 0}
     with session() as conn:
-        where = "WHERE status = 'new'" if only_new else ""
-        rows = conn.execute(f"SELECT * FROM signals {where}").fetchall()
+        conds = ["status = 'new'"] if only_new else []
+        params: list = []
+        if track:
+            conds.append("track = ?")
+            params.append(track)
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        rows = conn.execute(f"SELECT * FROM signals {where}", params).fetchall()
         for row in rows:
             s = dict(row)
-            score, hits = score_by_rules(s["raw_title"] or "", s["raw_content"] or "")
-            tags = ",".join(hits[:8])
+            sig_type = s.get("signal_type") or "news"
+            if sig_type in DATA_SIGNAL_TYPES:
+                # 数据类机会：天然高相关，按信号类型给基础分
+                score = 0.85 if sig_type in ("yield", "funding") else 0.6
+                tags = sig_type
+            else:
+                score, hits = score_by_rules(s["raw_title"] or "", s["raw_content"] or "")
+                tags = ",".join(hits[:8])
             conn.execute(
                 "UPDATE signals SET ai_relevance = ?, ai_tags = ? WHERE id = ?",
                 (score, tags, s["id"]),

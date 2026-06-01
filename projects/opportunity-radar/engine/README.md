@@ -28,16 +28,16 @@ python3 -m venv .venv
 # 2. （可选）配置 AI 辅助：复制 .env.example 为 .env 并填 key
 cp .env.example .env      # 编辑 .env，设 RADAR_AI_ENABLED=true 和 API KEY
 
-# 3. 初始化 + 导入种子源 + 首次扫描
+# 3. 走通加密赛道全流程（推荐先体验这个）
 python radar.py init
-python radar.py seed
-python radar.py scan      # = collect + filter + ai
+python radar.py setup crypto     # 准备加密赛道数据源
+python radar.py scan crypto      # 采集真实收益率/资金费率/趋势+资讯
+python radar.py ui               # 启动评估工作台
 
-# 4. 启动评估工作台
-python radar.py ui        # 浏览器打开 Streamlit 界面
+# AI 赛道则用： setup ai / scan ai
 ```
 
-> 说明：示例中 `python` 指虚拟环境内的解释器。若用根目录 venv，直接 `/path/to/.venv/bin/python radar.py ...`。
+> 详细图文走查见 `WALKTHROUGH-加密赛道.md`。
 
 ---
 
@@ -46,13 +46,24 @@ python radar.py ui        # 浏览器打开 Streamlit 界面
 | 命令 | 作用 |
 |------|------|
 | `init` | 初始化数据库 |
-| `seed` | 导入种子信息源（AI 赛道 RSS） |
-| `collect` | 采集所有 RSS 源到收件箱 |
-| `filter` | 规则初筛（关键词给相关度打分） |
-| `ai` | AI 初筛打标（需配置 AI，否则跳过） |
-| `scan` | 一键 collect+filter+ai（**日常用这个**） |
-| `stats` | 数据概览 |
+| `tracks` | 列出所有赛道 |
+| `setup <track>` | 初始化某赛道数据源（crypto / ai） |
+| `scan <track>` | **采集+初筛某赛道（日常用这个）** |
+| `stats` | 数据概览（按赛道） |
 | `ui` | 启动评估工作台 |
+
+---
+
+## 核心设计：按赛道可插拔的数据源
+
+> 回应"不同赛道数据源不同"——这是架构的核心。
+
+| 赛道 | 机会形态 | 数据源类型 | 采集器 |
+|------|---------|-----------|--------|
+| **加密Web3** | APY/资金费率/趋势（带数字的量化机会） | **数据 API** | DeFiLlama、Binance、CoinGecko + 加密资讯RSS |
+| **AI工具** | 新工具/限免/降价（文章发布） | 资讯 RSS | 厂商博客、社区、媒体 |
+
+新增赛道：在 `tracks.py` 注册一个 `Track`，声明它的采集器即可。
 
 ---
 
@@ -69,21 +80,26 @@ python radar.py ui        # 浏览器打开 Streamlit 界面
 
 ```
 engine/
-├── radar.py            # 统一 CLI 入口
+├── radar.py            # 统一 CLI 入口（按赛道）
+├── tracks.py           # 赛道定义（每个赛道声明自己的采集器）
 ├── config.py           # 配置（从 .env 读，密钥不入库）
 ├── db.py               # SQLite + 三张核心表
-├── sources_seed.py     # 种子信息源
+├── sources_seed.py        # AI 赛道 RSS 种子源
+├── sources_seed_crypto.py # 加密赛道 RSS 种子源
 ├── collectors/         # 采集层
-│   └── rss_collector.py
+│   ├── base.py             # 采集器基类 + 信号写入
+│   ├── rss_collector.py    # RSS 采集（按赛道过滤）
+│   └── crypto_collectors.py# 加密 API 采集（收益率/资金费率/趋势）
 ├── pipeline/           # 处理层
-│   ├── filter.py       # 规则初筛
+│   ├── filter.py       # 规则初筛（赛道感知 + 数据信号高相关）
 │   ├── ai_tagger.py    # AI 初筛打标（可选）
 │   └── scorer.py       # 六维评估框架
-└── ui/
-    └── app.py          # Streamlit 工作台
+├── ui/
+│   └── app.py          # Streamlit 工作台（引导/收件箱/机会/战绩/简报/扫描）
+└── WALKTHROUGH-加密赛道.md  # 图文走查
 ```
 
-数据表：`sources`（信息源）→ `signals`（原始信号/收件箱）→ `opportunities`（机会卡片/核心资产）。
+数据表：`sources`（信息源）→ `signals`（原始信号/收件箱，含 signal_type 和 metric 数字）→ `opportunities`（机会卡片/核心资产）。
 
 ---
 

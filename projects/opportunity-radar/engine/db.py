@@ -30,13 +30,17 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE TABLE IF NOT EXISTS signals (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id    INTEGER REFERENCES sources(id),
+    track        TEXT,                          -- 所属赛道（AI工具/加密Web3…）
+    signal_type  TEXT DEFAULT 'news',           -- news/yield/funding/trending/listing
     raw_title    TEXT,
     raw_content  TEXT,
     url          TEXT,
+    metric_value REAL,                          -- 关键数字（如 APY、资金费率年化）
+    metric_label TEXT,                          -- 数字含义（如 "APY %"）
     hash         TEXT UNIQUE,                   -- 去重
     published    TEXT,                          -- 源给的发布时间
     ai_tags      TEXT,                          -- AI 初筛标签(JSON)
-    ai_relevance REAL,                          -- AI 相关度 0-1
+    ai_relevance REAL,                          -- AI/规则 相关度 0-1
     ai_reason    TEXT,                          -- AI 给的简短理由
     status       TEXT NOT NULL DEFAULT 'new',   -- new/filtered_out/promoted
     fetched_at   TEXT NOT NULL DEFAULT (datetime('now'))

@@ -52,6 +52,7 @@ def collect_one(conn, source: dict) -> tuple[int, int]:
     )
     inserted, skipped = 0, 0
     entries = parsed.entries[: config.FETCH_LIMIT]
+    track = source.get("track") or ""
     for entry in entries:
         title = getattr(entry, "title", "").strip()
         link = getattr(entry, "link", "").strip()
@@ -63,9 +64,9 @@ def collect_one(conn, source: dict) -> tuple[int, int]:
             skipped += 1
             continue
         conn.execute(
-            """INSERT INTO signals (source_id, raw_title, raw_content, url, hash, published)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (source["id"], title, _entry_content(entry), link, h, _published(entry)),
+            """INSERT INTO signals (source_id, track, signal_type, raw_title, raw_content, url, hash, published)
+               VALUES (?, ?, 'news', ?, ?, ?, ?, ?)""",
+            (source["id"], track, title, _entry_content(entry), link, h, _published(entry)),
         )
         inserted += 1
     # 更新源的最后采集时间
@@ -76,13 +77,19 @@ def collect_one(conn, source: dict) -> tuple[int, int]:
     return inserted, skipped
 
 
-def collect_all() -> dict:
-    """采集所有启用的 RSS 源。"""
+def collect_all(track: str | None = None) -> dict:
+    """采集所有启用的 RSS 源。track 不为空时只采该赛道的源。"""
     stats = {"sources": 0, "inserted": 0, "skipped": 0, "errors": []}
     with session() as conn:
-        rows = conn.execute(
-            "SELECT * FROM sources WHERE enabled = 1 AND type = 'rss'"
-        ).fetchall()
+        if track:
+            rows = conn.execute(
+                "SELECT * FROM sources WHERE enabled = 1 AND type = 'rss' AND track = ?",
+                (track,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM sources WHERE enabled = 1 AND type = 'rss'"
+            ).fetchall()
         for row in rows:
             source = dict(row)
             stats["sources"] += 1

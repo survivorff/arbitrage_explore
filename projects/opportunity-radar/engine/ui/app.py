@@ -27,13 +27,17 @@ init_db()
 
 # ---------------- 数据访问 ----------------
 def fetch_signals(status: str, min_rel: float, limit: int,
-                  keyword: str = "", source_id: int | None = None) -> list[dict]:
+                  keyword: str = "", source_id: int | None = None,
+                  track: str | None = None) -> list[dict]:
     sql = (
         "SELECT s.*, src.name AS source_name, src.layer AS source_layer "
         "FROM signals s LEFT JOIN sources src ON s.source_id = src.id "
         "WHERE s.status = ? AND COALESCE(s.ai_relevance,0) >= ?"
     )
     params: list = [status, min_rel]
+    if track:
+        sql += " AND s.track = ?"
+        params.append(track)
     if keyword:
         sql += " AND (s.raw_title LIKE ? OR s.raw_content LIKE ?)"
         params += [f"%{keyword}%", f"%{keyword}%"]
@@ -45,6 +49,14 @@ def fetch_signals(status: str, min_rel: float, limit: int,
     with session() as conn:
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
+
+
+def list_tracks_in_db() -> list[str]:
+    with session() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT track FROM signals WHERE track IS NOT NULL AND track != '' ORDER BY track"
+        ).fetchall()
+        return [r["track"] for r in rows]
 
 
 def list_sources() -> list[dict]:
@@ -108,51 +120,113 @@ def get_counts() -> dict:
 
 
 # ---------------- 页面 ----------------
+def page_guide():
+    st.header("🏁 使用引导 · 5 分钟看懂怎么用")
+    st.markdown("""
+### 这个工具是做什么的？
+
+**一句话**：它帮你把"散落在各处的原始信号"加工成"可行动的机会判断"，本质是**信息差套利**——
+你比别人更早、更准地发现机会，省下他们的信息采集时间，这就是价值。
+
+```
+数据源 → [机器]采集+初筛 → 📥收件箱 → [你]评估判断 → 🎯机会卡片 → 📰简报 → 发布给受众
+         机器干脏活累活            你只做最有价值的"判断"            变现
+```
+
+---
+
+### 完整流程（照着走一遍就懂了）
+
+**第 1 步 · 🛰️ 信息源 & 扫描** → 选一个赛道（如"加密Web3"），点「立即扫描」。
+机器会从数据源拉取信号（加密赛道拉的是**真实的收益率/资金费率/趋势数据**，不是新闻）。
+
+**第 2 步 · 📥 收件箱** → 浏览机器筛好的信号（按相关度排序）。
+看到值得做成机会的，点「⬆️晋升」；没用的点「🗑️过滤」。**这一步是你的核心工作。**
+
+**第 3 步 · 🎯 机会卡片** → 给晋升的机会用"六维框架"打分，写下判断、风险、适合谁。
+这是你和"纯搬运信息的人"的本质区别——**你给的是判断，不是转发。**
+
+**第 4 步 · 📰 简报生成** → 勾选评估好的机会，一键导出 Markdown 简报。
+人工润色后发到公众号/小红书/社群。
+
+**第 5 步 · 📈 战绩追踪** → 过段时间回来记录"这个机会后来怎么样了"（含看错的）。
+诚实的战绩记录 = 你最重要的信任资产。
+
+---
+
+### 为什么不同赛道数据源不同？
+
+- **加密Web3**：机会是"带数字的量化信号"——DeFi 收益率(APY)、资金费率、趋势币。
+  来自**链上数据 API**（DeFiLlama / Binance / CoinGecko），不是新闻 RSS。
+- **AI工具**：机会主要以"文章/发布"形式出现，来自厂商博客、社区、媒体的 **RSS**。
+
+> 这就是为什么收件箱里加密信号会显示 **📊 APY / 资金费率** 这样的关键数字。
+
+---
+
+👉 **现在就开始**：点左侧「🛰️ 信息源 & 扫描」，选「加密Web3」，扫描后去「📥 收件箱」。
+""")
+    counts = get_counts()
+    m = st.columns(4)
+    m[0].metric("待评估信号", counts["new"])
+    m[1].metric("草稿机会", counts["draft"])
+    m[2].metric("已发布", counts["published"])
+    m[3].metric("启用信息源", counts["sources"])
+
+
 def page_inbox():
     st.header("📥 收件箱 · 待评估信号")
-    st.caption("按相关度排序。机器做初筛，判断由你来做。点「晋升」把值得追踪的信号变成机会卡片。")
+    st.info(
+        "**这一步做什么**：机器已从各数据源采集信号并按相关度排序。"
+        "你的任务是**快速扫一眼，把值得做成机会的点「⬆️晋升」，没用的「🗑️过滤」**。"
+        "判断由你做——这正是产品的核心价值。", icon="💡"
+    )
 
-    col1, col2, col3, col4 = st.columns([2, 2, 3, 2])
-    min_rel = col1.slider("最低相关度", 0.0, 1.0, 0.4, 0.1)
-    limit = col2.selectbox("显示数量", [20, 50, 100, 200], index=0)
-    keyword = col3.text_input("🔎 关键词搜索", "", placeholder="如：免费 / open source / Claude")
+    tracks = list_tracks_in_db()
+    track_map = {"全部赛道": None} | {t: t for t in tracks}
+    cT = st.columns([2, 2, 2, 3, 2])
+    track_pick = cT[0].selectbox("🎯 赛道", list(track_map.keys()))
+    min_rel = cT[1].slider("最低相关度", 0.0, 1.0, 0.4, 0.1)
+    limit = cT[2].selectbox("显示数量", [20, 50, 100, 200], index=0)
+    keyword = cT[3].text_input("🔎 关键词", "", placeholder="如：APY / 空投 / 免费 / 资金费率")
     sources = list_sources()
     src_map = {"全部来源": None} | {s["name"]: s["id"] for s in sources}
-    src_pick = col4.selectbox("来源", list(src_map.keys()))
+    src_pick = cT[4].selectbox("来源", list(src_map.keys()))
 
-    signals = fetch_signals("new", min_rel, limit, keyword.strip(), src_map[src_pick])
+    signals = fetch_signals("new", min_rel, limit, keyword.strip(), src_map[src_pick], track_map[track_pick])
     st.caption(f"当前命中 {len(signals)} 条 · 收件箱待评估总数 {get_counts()['new']}")
     if not signals:
-        st.info("没有符合条件的待评估信号。去「信息源 & 扫描」跑一次扫描，或放宽筛选条件。")
+        st.warning("没有符合条件的信号。去「🛰️ 信息源 & 扫描」选赛道扫描，或放宽筛选条件。")
         return
 
+    type_icon = {"yield": "💰", "funding": "📈", "trending": "🔥", "listing": "🆕", "news": "📰"}
     for s in signals:
         rel = s.get("ai_relevance") or 0
-        tags = s.get("ai_tags") or ""
-        reason = s.get("ai_reason") or ""
+        sig_type = s.get("signal_type") or "news"
+        icon = type_icon.get(sig_type, "📄")
         published = (s.get("published") or "")[:16]
         with st.container(border=True):
             top = st.columns([6, 1])
-            top[0].markdown(f"**{s['raw_title']}**")
+            top[0].markdown(f"{icon} **{s['raw_title']}**")
             top[1].markdown(f"`{rel:.2f}`")
-            meta = f"来源: {s.get('source_name','?')} (L{s.get('source_layer','?')})"
+            # 关键数字（加密机会的核心）
+            if s.get("metric_value") is not None and s.get("metric_label"):
+                st.markdown(f"**📊 {s['metric_label']}: `{s['metric_value']:.2f}`**")
+            meta = f"赛道: {s.get('track','-')} · 来源: {s.get('source_name','?')} (L{s.get('source_layer','?')})"
             if published:
                 meta += f" · 🕒 {published}"
-            if tags:
-                meta += f" · 🏷️ {tags}"
-            if reason:
-                meta += f" · 🤖 {reason}"
+            if s.get("ai_tags"):
+                meta += f" · 🏷️ {s['ai_tags']}"
             st.caption(meta)
             if s.get("url"):
                 st.caption(f"🔗 {s['url']}")
-
-            with st.expander("摘要"):
-                st.write((s.get("raw_content") or "")[:1000] or "（无摘要）")
+            with st.expander("详情"):
+                st.write((s.get("raw_content") or "")[:1000] or "（无详情）")
 
             btns = st.columns([1, 1, 4])
             if btns[0].button("⬆️ 晋升为机会", key=f"promote_{s['id']}"):
-                oid = promote_signal(s["id"], s["raw_title"], (s.get("raw_content") or "")[:200])
-                st.success(f"已晋升为机会卡片 #{oid}，去「机会卡片」页评估。")
+                oid = promote_signal(s["id"], s["raw_title"], (s.get("raw_content") or "")[:300])
+                st.success(f"已晋升为机会卡片 #{oid}，去「🎯 机会卡片」评估。")
                 st.rerun()
             if btns[1].button("🗑️ 过滤掉", key=f"drop_{s['id']}"):
                 set_signal_status(s["id"], "filtered_out")
@@ -286,31 +360,52 @@ def page_sources():
     m[3].metric("机会卡片(草稿)", counts["draft"])
 
     st.divider()
-    st.subheader("一键扫描")
-    st.caption("采集 RSS → 规则初筛 →（若配置）AI 打标。也可用命令行 `python radar.py scan`。")
-    if st.button("🔄 立即扫描"):
-        with st.spinner("采集中…"):
-            from collectors.rss_collector import collect_all
-            cs = collect_all()
-        with st.spinner("规则初筛中…"):
+    st.subheader("① 选赛道扫描")
+    st.caption("不同赛道用不同数据源：加密=链上数据API（收益率/资金费率/趋势），AI=资讯RSS。")
+    from tracks import list_tracks as _lt
+    track_objs = _lt()
+    labels = {f"{t.name}（{t.key}）": t.key for t in track_objs}
+    pick = st.selectbox("赛道", list(labels.keys()))
+    track_key = labels[pick]
+    track_obj = next(t for t in track_objs if t.key == track_key)
+    st.caption(f"📖 {track_obj.desc}")
+
+    if st.button("🔄 立即扫描该赛道", type="primary"):
+        log = st.empty()
+        with st.spinner("采集中…（加密赛道会实时拉取收益率/资金费率/趋势）"):
+            total = 0
+            # API 采集器
+            for cls in track_obj.api_collectors:
+                col = cls()
+                try:
+                    i, _ = col.run()
+                    total += i
+                except Exception as e:
+                    st.warning(f"{col.name} 失败: {e}")
+            # RSS
+            if track_obj.rss_track:
+                from collectors.rss_collector import collect_all
+                rss = collect_all(track=track_obj.rss_track)
+                total += rss["inserted"]
+            # 初筛
             from pipeline.filter import run_rule_filter
-            run_rule_filter(only_new=True)
-        from config import config
-        if config.ai_ready():
-            with st.spinner("AI 打标中…"):
+            run_rule_filter(only_new=True, track=track_obj.name)
+            from config import config
+            if config.ai_ready():
                 from pipeline.ai_tagger import run_ai_tagger
                 run_ai_tagger(limit=30)
-        st.success(f"扫描完成：新增 {cs['inserted']} 条信号，{len(cs['errors'])} 个源失败。")
+        st.success(f"✅ 扫描完成，新增 {total} 条信号。去「📥 收件箱」查看。")
         st.rerun()
 
     st.divider()
-    st.subheader("信息源清单")
+    st.subheader("② 当前信息源清单")
     with session() as conn:
         rows = conn.execute(
-            "SELECT name, type, layer, value_rating, last_fetched, enabled FROM sources ORDER BY layer, value_rating DESC"
+            "SELECT name, type, track, layer, value_rating, last_fetched, enabled "
+            "FROM sources ORDER BY track, layer, value_rating DESC"
         ).fetchall()
     st.dataframe([dict(r) for r in rows], use_container_width=True)
-    st.caption("维护建议：往①②层（一手/社区）渗透，砍掉噪音源。见 build/03-信息源。")
+    st.caption("维护建议：往①②层（一手/社区）渗透，砍掉噪音源。命令行也可：python radar.py scan crypto")
 
 
 def _now() -> str:
@@ -398,6 +493,7 @@ def page_briefing():
 
 # ---------------- 导航 ----------------
 PAGES = {
+    "🏁 使用引导": page_guide,
     "📥 收件箱": page_inbox,
     "🎯 机会卡片": page_opportunities,
     "📈 战绩追踪": page_track,
