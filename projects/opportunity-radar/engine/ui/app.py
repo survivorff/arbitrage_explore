@@ -26,15 +26,31 @@ init_db()
 
 
 # ---------------- 数据访问 ----------------
-def fetch_signals(status: str, min_rel: float, limit: int) -> list[dict]:
+def fetch_signals(status: str, min_rel: float, limit: int,
+                  keyword: str = "", source_id: int | None = None) -> list[dict]:
+    sql = (
+        "SELECT s.*, src.name AS source_name, src.layer AS source_layer "
+        "FROM signals s LEFT JOIN sources src ON s.source_id = src.id "
+        "WHERE s.status = ? AND COALESCE(s.ai_relevance,0) >= ?"
+    )
+    params: list = [status, min_rel]
+    if keyword:
+        sql += " AND (s.raw_title LIKE ? OR s.raw_content LIKE ?)"
+        params += [f"%{keyword}%", f"%{keyword}%"]
+    if source_id:
+        sql += " AND s.source_id = ?"
+        params.append(source_id)
+    sql += " ORDER BY s.ai_relevance DESC, s.fetched_at DESC LIMIT ?"
+    params.append(limit)
+    with session() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_sources() -> list[dict]:
     with session() as conn:
         rows = conn.execute(
-            """SELECT s.*, src.name AS source_name, src.layer AS source_layer
-               FROM signals s LEFT JOIN sources src ON s.source_id = src.id
-               WHERE s.status = ? AND COALESCE(s.ai_relevance,0) >= ?
-               ORDER BY s.ai_relevance DESC, s.fetched_at DESC
-               LIMIT ?""",
-            (status, min_rel, limit),
+            "SELECT id, name FROM sources WHERE enabled=1 ORDER BY name"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -96,29 +112,36 @@ def page_inbox():
     st.header("📥 收件箱 · 待评估信号")
     st.caption("按相关度排序。机器做初筛，判断由你来做。点「晋升」把值得追踪的信号变成机会卡片。")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns([2, 2, 3, 2])
     min_rel = col1.slider("最低相关度", 0.0, 1.0, 0.4, 0.1)
-    limit = col2.selectbox("显示数量", [20, 50, 100], index=0)
-    col3.metric("待评估信号", get_counts()["new"])
+    limit = col2.selectbox("显示数量", [20, 50, 100, 200], index=0)
+    keyword = col3.text_input("🔎 关键词搜索", "", placeholder="如：免费 / open source / Claude")
+    sources = list_sources()
+    src_map = {"全部来源": None} | {s["name"]: s["id"] for s in sources}
+    src_pick = col4.selectbox("来源", list(src_map.keys()))
 
-    signals = fetch_signals("new", min_rel, limit)
+    signals = fetch_signals("new", min_rel, limit, keyword.strip(), src_map[src_pick])
+    st.caption(f"当前命中 {len(signals)} 条 · 收件箱待评估总数 {get_counts()['new']}")
     if not signals:
-        st.info("没有符合条件的待评估信号。去「信息源 & 扫描」跑一次扫描，或降低相关度阈值。")
+        st.info("没有符合条件的待评估信号。去「信息源 & 扫描」跑一次扫描，或放宽筛选条件。")
         return
 
     for s in signals:
         rel = s.get("ai_relevance") or 0
         tags = s.get("ai_tags") or ""
         reason = s.get("ai_reason") or ""
+        published = (s.get("published") or "")[:16]
         with st.container(border=True):
             top = st.columns([6, 1])
             top[0].markdown(f"**{s['raw_title']}**")
             top[1].markdown(f"`{rel:.2f}`")
             meta = f"来源: {s.get('source_name','?')} (L{s.get('source_layer','?')})"
+            if published:
+                meta += f" · 🕒 {published}"
             if tags:
-                meta += f" · 标签: {tags}"
+                meta += f" · 🏷️ {tags}"
             if reason:
-                meta += f" · AI: {reason}"
+                meta += f" · 🤖 {reason}"
             st.caption(meta)
             if s.get("url"):
                 st.caption(f"🔗 {s['url']}")
@@ -295,11 +318,90 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def build_briefing(opps: list[dict]) -> str:
+    """把机会卡片渲染成 Markdown 简报（对应 templates/每周简报.md 结构）。"""
+    from datetime import date
+    lines: list[str] = []
+    lines.append(f"# 机会雷达 · 简报（{date.today().isoformat()}）")
+    lines.append("")
+    lines.append(f"> 本期覆盖赛道：AI工具 · 精选机会 {len(opps)} 个。")
+    lines.append("")
+    lines.append("## 📋 本期速览（30秒版）")
+    lines.append("")
+    for i, o in enumerate(opps, 1):
+        j = o.get("judgment") or "—"
+        lines.append(f"{i}. **{o['title']}** —— {(o.get('summary') or '').strip()[:50]}（{j}）")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## 🎯 机会详情")
+    lines.append("")
+    for o in opps:
+        total = scorer.weighted_total(o)
+        lines.append(f"### 🎯 {o['title']}")
+        lines.append("")
+        lines.append(f"- **赛道/维度**：{o.get('track','AI工具')} / {o.get('dimension','-')}")
+        if o.get("summary"):
+            lines.append(f"- **是什么**：{o['summary']}")
+        if o.get("why_matters"):
+            lines.append(f"- **为什么值得关注**：{o['why_matters']}")
+        if o.get("risks"):
+            lines.append(f"- **⚠️ 风险与坑**：{o['risks']}")
+        if o.get("fit_for"):
+            lines.append(f"- **适合谁**：{o['fit_for']}")
+        if o.get("half_life"):
+            lines.append(f"- **时效**：{o['half_life']}")
+        lines.append(f"- **我的判断**：{o.get('judgment','-')}　|　评分 {total}/{scorer.MAX_TOTAL}")
+        if o.get("judgment_reason"):
+            lines.append(f"  - 理由：{o['judgment_reason']}")
+        if o.get("disclosure") and o["disclosure"] != "无":
+            lines.append(f"- **利益披露**：{o['disclosure']}")
+        lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append(
+        "*免责声明：本简报仅为信息分享与研究交流，不构成任何投资、财务或法律建议，"
+        "不构成任何买卖推荐。信息可能有误或延迟，请自行核实、独立决策、自负风险。*"
+    )
+    return "\n".join(lines)
+
+
+def page_briefing():
+    st.header("📰 简报生成")
+    st.caption("把评估好的机会一键导出为 Markdown 简报，可直接用于公众号/小红书/社群（人工润色后发布）。")
+
+    drafts = fetch_opportunities("draft")
+    published = fetch_opportunities("published") + fetch_opportunities("reviewed") + fetch_opportunities("tracking")
+
+    pool = published + drafts
+    if not pool:
+        st.info("还没有机会卡片可生成简报。先去「收件箱」晋升、在「机会卡片」评估。")
+        return
+
+    label = {f"#{o['id']} {o['title'][:40]} [{o.get('status')}]": o for o in pool}
+    picked = st.multiselect(
+        "选择要纳入简报的机会（默认选中已发布/已评估的）",
+        list(label.keys()),
+        default=[k for k, o in label.items() if o in published],
+    )
+    chosen = [label[k] for k in picked]
+    if not chosen:
+        st.warning("请至少选择一个机会。")
+        return
+
+    md = build_briefing(chosen)
+    st.download_button("⬇️ 下载简报 Markdown", md, file_name="机会雷达简报.md", mime="text/markdown")
+    st.divider()
+    st.subheader("预览")
+    st.markdown(md)
+
+
 # ---------------- 导航 ----------------
 PAGES = {
     "📥 收件箱": page_inbox,
     "🎯 机会卡片": page_opportunities,
     "📈 战绩追踪": page_track,
+    "📰 简报生成": page_briefing,
     "🛰️ 信息源 & 扫描": page_sources,
 }
 
