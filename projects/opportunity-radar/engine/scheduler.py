@@ -64,40 +64,63 @@ def run_once(push: bool = False) -> dict:
     return summary
 
 
-def _push_new_l4(after_id: int, max_push: int = 10) -> int:
-    """把本轮新增、L4、非骗局的信号推送到 Telegram。"""
-    from publishers.telegram_pub import tg_ready, send_message
-    if not tg_ready():
+def _push_new_l4(after_id: int, max_push_per_track: int = 8) -> int:
+    """把本轮新增、L4、非骗局的信号，按"有专属频道的赛道"分别推送。
+
+    只推配置了专属频道的赛道（严格模式），每个赛道最多 max_push_per_track 条，
+    避免漏推也避免刷屏/误推私聊。
+    """
+    from publishers.telegram_pub import send_message, chat_for_track, _enabled, _token, TRACK_KEY
+    if not _enabled() or not _token():
         print("  [push] Telegram 未配置，跳过推送。")
         return 0
-    with session() as conn:
-        rows = conn.execute(
-            """SELECT * FROM signals
-               WHERE id > ? AND level = 4 AND COALESCE(scam_flag,0) = 0 AND status='new'
-               ORDER BY ai_relevance DESC LIMIT ?""",
-            (after_id, max_push),
-        ).fetchall()
-        signals = [dict(r) for r in rows]
     pushed = 0
-    for s in signals:
-        text = _format_signal(s)
-        ok, _ = send_message(text)
-        if ok:
-            pushed += 1
-        time.sleep(0.5)  # 避免触发限流
+    for track in TRACK_KEY:  # 中文赛道名
+        chat = chat_for_track(track, allow_fallback=False)
+        if not chat:
+            continue  # 该赛道没配专属频道
+        with session() as conn:
+            rows = conn.execute(
+                """SELECT * FROM signals
+                   WHERE id > ? AND track = ? AND level = 4
+                     AND COALESCE(scam_flag,0) = 0 AND status='new'
+                   ORDER BY ai_relevance DESC LIMIT ?""",
+                (after_id, track, max_push_per_track),
+            ).fetchall()
+            signals = [dict(r) for r in rows]
+        for s in signals:
+            ok, _ = send_message(_format_signal(s), chat)
+            if ok:
+                pushed += 1
+            time.sleep(0.5)
     return pushed
 
 
 def _format_signal(s: dict) -> str:
-    """把原始高价值信号格式化为提醒消息。"""
-    lines = [f"🟢 *L4 新机会* · {s.get('track','')}", "", s.get("raw_title", "")]
+    """把原始高价值信号格式化为频道推送消息（公开面向用户）。"""
+    type_icon = {"yield": "💰", "funding": "📈", "trending": "🔥",
+                 "listing": "🆕", "news": "📰"}
+    icon = type_icon.get(s.get("signal_type"), "🟢")
+    lines = [f"{icon} *{_md_escape(s.get('raw_title',''))}*"]
     if s.get("metric_value") is not None and s.get("metric_label"):
         lines.append(f"📊 {s['metric_label']}: {s['metric_value']:.2f}")
+    # 取详情正文的前两行（含套利思路/风险提示）
+    content = (s.get("raw_content") or "").strip()
+    if content:
+        body = content.split("\n")
+        extra = [ln for ln in body if any(k in ln for k in ("套利", "机会角度", "风险", "信号"))]
+        for ln in extra[:2]:
+            lines.append(_md_escape(ln.strip()))
     if s.get("url"):
-        lines.append(s["url"])
-    lines.append("")
-    lines.append("_自动提醒 · 仅信息分享不构成投资建议 · 人工评估后再行动_")
+        lines.append(f"\n🔗 {s['url']}")
+    lines.append("\n_自动提醒 · 仅信息分享不构成投资建议 · 自行核实_")
     return "\n".join(lines)
+
+
+def _md_escape(text: str) -> str:
+    for ch in ["_", "*", "`", "["]:
+        text = text.replace(ch, "\\" + ch)
+    return text
 
 
 def main() -> None:

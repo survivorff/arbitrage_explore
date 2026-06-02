@@ -588,22 +588,26 @@ def page_briefing():
 
     # --- Telegram ---
     with tab2:
-        from publishers.telegram_pub import tg_ready, publish_opportunities
-        if not tg_ready():
+        from publishers.telegram_pub import tg_ready, publish_opportunities, chat_for_track
+        # 按选中机会的赛道判断
+        tracks_sel = sorted({(o.get("track") or "") for o in chosen})
+        st.caption(f"将按赛道路由到对应频道。选中机会涉及赛道：{', '.join(tracks_sel) or '-'}")
+        for tk in tracks_sel:
+            ch = chat_for_track(tk)
+            status = f"→ {ch}" if ch else "⚠️ 未配置频道"
+            st.write(f"- {tk}: {status}")
+        if not any(chat_for_track(tk) for tk in tracks_sel):
             st.warning(
-                "Telegram 未配置。在 `engine/.env` 设置：\n\n"
-                "`RADAR_TG_ENABLED=true`\n"
-                "`RADAR_TG_BOT_TOKEN=...`（找 @BotFather 创建）\n"
-                "`RADAR_TG_CHAT_ID=@你的频道`"
+                "对应赛道未配置频道。在 `engine/.env` 设置：\n\n"
+                "`RADAR_TG_ENABLED=true`、`RADAR_TG_BOT_TOKEN=...`、\n"
+                "`RADAR_TG_CHAT_CRYPTO=@你的加密频道`（一个频道一个赛道）"
             )
-            st.caption("配置后，加密/开发者受众能在 Telegram 即时收到机会。")
         else:
-            st.success("Telegram 已配置。")
-            if st.button("🤖 推送选中机会到 Telegram", type="primary"):
+            if st.button("🤖 按赛道推送到对应频道", type="primary"):
                 with st.spinner("推送中…"):
                     r = publish_opportunities(chosen)
                 if r["skipped"]:
-                    st.warning("未配置，已跳过。")
+                    st.warning("Telegram 未启用，已跳过。")
                 else:
                     st.success(f"推送完成：成功 {r['sent']}，失败 {r['failed']}。")
                     if r["errors"]:
