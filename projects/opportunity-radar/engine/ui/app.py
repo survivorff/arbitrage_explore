@@ -470,6 +470,25 @@ def page_sources():
     st.dataframe([dict(r) for r in rows], use_container_width=True)
     st.caption("维护建议：往①②层（一手/社区）渗透，砍掉噪音源。命令行也可：python radar.py scan crypto")
 
+    st.divider()
+    st.subheader("③ 数据源健康检查")
+    st.caption("定期检查每个源是否还活着，揪出悄悄失效的源。命令行：python radar.py health")
+    if st.button("🩺 检查所有数据源"):
+        with st.spinner("探测中…（逐个访问每个源）"):
+            from pipeline.health import run_health_check
+            rpt = run_health_check(disable_dead=False)
+        st.success(f"检查完成：健康 {rpt['healthy']} · 失效 {rpt['dead']}")
+        bad = [r for r in (rpt["rss"] + rpt["api"]) if not r["healthy"]]
+        if bad:
+            st.error("以下源失效，建议更新 sources_seed*.py 里的 URL：")
+            st.dataframe(
+                [{"名称": r["name"], "赛道": r.get("track", ""), "说明": r["detail"]} for r in bad],
+                use_container_width=True,
+            )
+        else:
+            st.balloons()
+            st.info("所有源健康 ✅")
+
 
 def _now() -> str:
     from datetime import datetime, timezone
@@ -528,22 +547,24 @@ def build_briefing(opps: list[dict]) -> str:
 
 
 def page_briefing():
-    st.header("📰 简报生成")
-    st.caption("把评估好的机会一键导出为 Markdown 简报，可直接用于公众号/小红书/社群（人工润色后发布）。")
+    st.header("📤 分发中心")
+    st.info(
+        "**这一步做什么**：把评估好的机会**送到用户面前**。"
+        "用户不该来这个网页——他们应该在公众号/小红书/Telegram/RSS 里收到你的机会。", icon="📣"
+    )
 
     drafts = fetch_opportunities("draft")
-    published = fetch_opportunities("published") + fetch_opportunities("reviewed") + fetch_opportunities("tracking")
-
+    published = (fetch_opportunities("published") + fetch_opportunities("reviewed")
+                 + fetch_opportunities("tracking"))
     pool = published + drafts
     if not pool:
-        st.info("还没有机会卡片可生成简报。先去「收件箱」晋升、在「机会卡片」评估。")
+        st.warning("还没有机会卡片。先去「收件箱」晋升、在「机会卡片」评估并发布。")
         return
 
-    # 用 id 做标签的稳定唯一键，避免标题截断重复导致条目互相覆盖
-    label = {f"#{o['id']} {o['title'][:40]} [{o.get('status')}]": o for o in pool}
+    label = {f"#{o['id']} {o['title'][:36]} [{o.get('status')}]": o for o in pool}
     published_ids = {o["id"] for o in published}
     picked = st.multiselect(
-        "选择要纳入简报的机会（默认选中已发布/已评估的）",
+        "选择要分发的机会（默认选中已发布的）",
         list(label.keys()),
         default=[k for k, o in label.items() if o["id"] in published_ids],
     )
@@ -552,11 +573,60 @@ def page_briefing():
         st.warning("请至少选择一个机会。")
         return
 
-    md = build_briefing(chosen)
-    st.download_button("⬇️ 下载简报 Markdown", md, file_name="机会雷达简报.md", mime="text/markdown")
+    from publishers import exporters
+
+    tab1, tab2, tab3, tab4 = st.tabs(["📝 文案导出", "🤖 Telegram", "📡 RSS", "📧 邮件"])
+
+    # --- 文案导出（公众号/小红书/纯文本）---
+    with tab1:
+        st.caption("一次评估，多渠道文案。复制到对应平台，人工润色后发布。")
+        fmt = st.radio("选择渠道格式", list(exporters.FORMATS.keys()), horizontal=True)
+        content = exporters.FORMATS[fmt](chosen)
+        st.download_button(f"⬇️ 下载{fmt}文案", content,
+                           file_name=f"机会雷达_{fmt}.md", mime="text/markdown")
+        st.code(content, language="markdown")
+
+    # --- Telegram ---
+    with tab2:
+        from publishers.telegram_pub import tg_ready, publish_opportunities
+        if not tg_ready():
+            st.warning(
+                "Telegram 未配置。在 `engine/.env` 设置：\n\n"
+                "`RADAR_TG_ENABLED=true`\n"
+                "`RADAR_TG_BOT_TOKEN=...`（找 @BotFather 创建）\n"
+                "`RADAR_TG_CHAT_ID=@你的频道`"
+            )
+            st.caption("配置后，加密/开发者受众能在 Telegram 即时收到机会。")
+        else:
+            st.success("Telegram 已配置。")
+            if st.button("🤖 推送选中机会到 Telegram", type="primary"):
+                with st.spinner("推送中…"):
+                    r = publish_opportunities(chosen)
+                if r["skipped"]:
+                    st.warning("未配置，已跳过。")
+                else:
+                    st.success(f"推送完成：成功 {r['sent']}，失败 {r['failed']}。")
+                    if r["errors"]:
+                        st.error("；".join(r["errors"][:3]))
+
+    # --- RSS ---
+    with tab3:
+        st.caption("生成 RSS feed.xml，用户用任意阅读器订阅你的机会流（不依赖任何平台）。")
+        from publishers.rss_out import write_feed, build_feed
+        if st.button("📡 生成 feed.xml"):
+            path, n = write_feed()
+            st.success(f"已生成：{path}（{n} 条已发布机会）")
+            st.caption("把这个文件托管到任意静态服务器/对象存储/GitHub Pages 即可对外订阅。")
+        with st.expander("预览 RSS 内容"):
+            st.code(build_feed(limit=10), language="xml")
+
+    # --- 邮件（占位，下一阶段）---
+    with tab4:
+        st.caption("邮件 Newsletter 是沉淀'可带走名单'的核心渠道，规划在下一阶段接入。")
+        st.info("当前可先用「文案导出」的内容，手动粘贴到你的邮件工具群发。")
+
     st.divider()
-    st.subheader("预览")
-    st.markdown(md)
+    st.caption(f"已选 {len(chosen)} 个机会。提示：分发前确保已在「机会卡片」填好风险与判断。")
 
 
 # ---------------- 导航 ----------------
@@ -565,7 +635,7 @@ PAGES = {
     "📥 收件箱": page_inbox,
     "🎯 机会卡片": page_opportunities,
     "📈 战绩追踪": page_track,
-    "📰 简报生成": page_briefing,
+    "📤 分发中心": page_briefing,
     "🛰️ 信息源 & 扫描": page_sources,
 }
 

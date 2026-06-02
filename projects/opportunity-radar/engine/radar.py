@@ -6,6 +6,7 @@
     python radar.py setup <track>       初始化某赛道的数据源（crypto / ai）
     python radar.py scan <track>        采集+初筛某赛道（日常用这个）
     python radar.py stats               数据概览
+    python radar.py health              数据源健康检查（定期跑，揪出失效源）
     python radar.py ui                  启动评估工作台（Streamlit）
 
 示例（加密赛道走通全流程）：
@@ -122,6 +123,11 @@ def cmd_stats() -> None:
         print(f"  机会卡片:     {c('SELECT COUNT(*) FROM opportunities')}")
 
 
+def cmd_health() -> None:
+    from pipeline.health import run_health_check, print_report
+    print_report(run_health_check(disable_dead=False))
+
+
 def cmd_ui() -> None:
     app = ENGINE_DIR / "ui" / "app.py"
     print("启动评估工作台（Ctrl+C 退出）…")
@@ -140,6 +146,7 @@ def main() -> None:
         "setup": lambda: cmd_setup(arg) if arg else print("请指定赛道：setup crypto|ai"),
         "scan": lambda: cmd_scan(arg),
         "stats": lambda: cmd_stats(),
+        "health": lambda: cmd_health(),
         "ui": lambda: cmd_ui(),
     }
     if cmd not in dispatch:
