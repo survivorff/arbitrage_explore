@@ -166,7 +166,58 @@ class CoinGeckoTrending(Collector):
         return ins, skip
 
 
-CRYPTO_COLLECTORS = [DefiLlamaYields, BinanceFunding, CoinGeckoTrending]
+class DefiLlamaNewProtocols(Collector):
+    """DeFiLlama 新上线协议：过去 N 天新增的协议，作为"早期机会/潜在空投"信号。
+
+    新协议早期参与（交互、提供流动性）常有空投/积分预期——典型信息差套利。
+    但风险也高（未经检验、可能跑路），所以这里只作为"待评估"线索。
+    """
+    name = "DeFiLlama 新协议"
+    type = "api"
+    track = TRACK
+    layer = 1
+    rating = 3
+
+    DAYS = 30
+    MIN_TVL = 100_000     # 太小的过滤掉（噪音/貔貅）
+    TOP_N = 25
+
+    def collect(self, conn) -> tuple[int, int]:
+        import time
+        with _client() as c:
+            data = c.get("https://api.llama.fi/protocols").json()
+        now = time.time()
+        recent = [
+            p for p in data
+            if p.get("listedAt") and (now - p["listedAt"]) < self.DAYS * 86400
+            and (p.get("tvl") or 0) >= self.MIN_TVL
+        ]
+        recent.sort(key=lambda x: -x["listedAt"])
+        ins = skip = 0
+        for p in recent[: self.TOP_N]:
+            days = int((now - p["listedAt"]) / 86400)
+            tvl_m = (p.get("tvl") or 0) / 1e6
+            chains = ", ".join((p.get("chains") or [])[:3])
+            title = f"[新协议] {p['name']} · {p.get('category','?')} · {days}天前上线"
+            content = (
+                f"协议: {p['name']} | 分类: {p.get('category','?')}\n"
+                f"链: {chains} | TVL: ${tvl_m:.1f}M | 上线: {days}天前\n"
+                f"机会角度: 新协议早期交互常有空投/积分预期，属于早期信息差。\n"
+                f"⚠️ 风险: 未经检验、可能有合约风险或跑路，仅作早期线索，务必自行尽调。"
+            )
+            url = p.get("url") or f"https://defillama.com/protocol/{p.get('slug','')}"
+            ok = insert_signal(
+                conn, source_id=self._source_id, track=TRACK, signal_type="listing",
+                title=title, content=content, url=url,
+                metric_value=float(days), metric_label="上线天数",
+                dedup_key=f"newproto:{p.get('name')}",
+            )
+            ins += ok
+            skip += not ok
+        return ins, skip
+
+
+CRYPTO_COLLECTORS = [DefiLlamaYields, BinanceFunding, CoinGeckoTrending, DefiLlamaNewProtocols]
 
 
 if __name__ == "__main__":

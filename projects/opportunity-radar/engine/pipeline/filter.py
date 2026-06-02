@@ -125,6 +125,10 @@ def _classify_data_signal(sig: dict) -> tuple[int, int, float]:
             return 2, 0, 0.6
         return 2, 0, 0.6            # 加密趋势币等，更多是背景
 
+    if sig_type == "listing":
+        # 新协议/新上线：早期线索，归 L3 待评估（有空投预期但需尽调）
+        return 3, 0, 0.7
+
     return 3, 0, 0.7
 
 

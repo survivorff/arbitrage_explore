@@ -29,6 +29,7 @@ tmp/
 
 # 分发产物（运行时生成）
 feed.xml
+site/
 
 # Python (后续技术开发可能用到)
 __pycache__/

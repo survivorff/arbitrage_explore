@@ -7,6 +7,8 @@
     python radar.py scan <track>        采集+初筛某赛道（日常用这个）
     python radar.py stats               数据概览
     python radar.py health              数据源健康检查（定期跑，揪出失效源）
+    python radar.py auto once [--push]  跑一轮自动采集+初筛（--push 推L4到Telegram）
+    python radar.py auto loop --interval 3600 [--push]   定时循环
     python radar.py ui                  启动评估工作台（Streamlit）
 
 示例（加密赛道走通全流程）：
@@ -128,6 +130,14 @@ def cmd_health() -> None:
     print_report(run_health_check(disable_dead=False))
 
 
+def cmd_auto(arg: str | None) -> None:
+    """定时自动化：透传给 scheduler。arg 为 'once'/'loop' 等，默认 once。"""
+    import subprocess
+    sched = ENGINE_DIR / "scheduler.py"
+    rest = sys.argv[2:] if len(sys.argv) > 2 else ["once"]
+    subprocess.run([sys.executable, str(sched)] + rest, check=False)
+
+
 def cmd_ui() -> None:
     app = ENGINE_DIR / "ui" / "app.py"
     print("启动评估工作台（Ctrl+C 退出）…")
@@ -147,6 +157,7 @@ def main() -> None:
         "scan": lambda: cmd_scan(arg),
         "stats": lambda: cmd_stats(),
         "health": lambda: cmd_health(),
+        "auto": lambda: cmd_auto(arg),
         "ui": lambda: cmd_ui(),
     }
     if cmd not in dispatch:

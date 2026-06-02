@@ -609,14 +609,19 @@ def page_briefing():
                     if r["errors"]:
                         st.error("；".join(r["errors"][:3]))
 
-    # --- RSS ---
+    # --- RSS + 公开页 ---
     with tab3:
-        st.caption("生成 RSS feed.xml，用户用任意阅读器订阅你的机会流（不依赖任何平台）。")
+        st.caption("生成 RSS feed.xml + 公开页 index.html，用户订阅你的机会流（不依赖任何平台）。")
         from publishers.rss_out import write_feed, build_feed
-        if st.button("📡 生成 feed.xml"):
+        from publishers.site_out import write_site
+        col_a, col_b = st.columns(2)
+        if col_a.button("📡 生成 feed.xml"):
             path, n = write_feed()
-            st.success(f"已生成：{path}（{n} 条已发布机会）")
-            st.caption("把这个文件托管到任意静态服务器/对象存储/GitHub Pages 即可对外订阅。")
+            st.success(f"RSS 已生成：{path}（{n} 条）")
+        if col_b.button("🌐 生成公开页 index.html"):
+            path, n = write_site()
+            st.success(f"公开页已生成：{path}（{n} 条）")
+            st.caption("托管到 GitHub Pages / 对象存储即可对外访问。")
         with st.expander("预览 RSS 内容"):
             st.code(build_feed(limit=10), language="xml")
 
