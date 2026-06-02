@@ -217,7 +217,54 @@ class DefiLlamaNewProtocols(Collector):
         return ins, skip
 
 
-CRYPTO_COLLECTORS = [DefiLlamaYields, BinanceFunding, CoinGeckoTrending, DefiLlamaNewProtocols]
+class CoinGeckoHotCategories(Collector):
+    """CoinGecko 板块涨幅榜：捕捉"最热叙事/板块"——加密最重要的热点信号。
+
+    哪个板块在涨 = 资金在往哪走 = 当前最热的叙事。比单个币更能反映趋势。
+    """
+    name = "CoinGecko 热点板块"
+    type = "api"
+    track = TRACK
+    layer = 1
+    rating = 3
+
+    MIN_CHANGE = 8.0    # 板块 24h 涨幅 > 8% 才算"热"
+    TOP_N = 12
+
+    def collect(self, conn) -> tuple[int, int]:
+        from datetime import date
+        with _client() as c:
+            data = c.get(
+                "https://api.coingecko.com/api/v3/coins/categories"
+                "?order=market_cap_change_24h_desc"
+            ).json()
+        today = date.today().isoformat()
+        ins = skip = 0
+        rows = [d for d in data if (d.get("market_cap_change_24h") or 0) >= self.MIN_CHANGE]
+        for d in rows[: self.TOP_N]:
+            chg = d.get("market_cap_change_24h") or 0
+            mcap_b = (d.get("market_cap") or 0) / 1e9
+            top = ", ".join((d.get("top_3_coins_id") or [])[:3])
+            title = f"[热点板块] {d['name']} 24h +{chg:.1f}%"
+            content = (
+                f"板块: {d['name']} | 24h涨幅: +{chg:.1f}% | 板块市值: ${mcap_b:.1f}B\n"
+                f"代表项目: {top}\n"
+                f"信号: 资金正流入该叙事，是当前热点。⚠️ 热点轮动快，注意追高风险。"
+            )
+            url = "https://www.coingecko.com/en/categories"
+            ok = insert_signal(
+                conn, source_id=self._source_id, track=TRACK, signal_type="trending",
+                title=title, content=content, url=url,
+                metric_value=float(chg), metric_label="板块24h涨幅 %",
+                dedup_key=f"hotcat:{d.get('id')}:{today}",
+            )
+            ins += ok
+            skip += not ok
+        return ins, skip
+
+
+CRYPTO_COLLECTORS = [DefiLlamaYields, BinanceFunding, CoinGeckoTrending,
+                     DefiLlamaNewProtocols, CoinGeckoHotCategories]
 
 
 if __name__ == "__main__":

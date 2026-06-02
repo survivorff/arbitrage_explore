@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from collectors.crypto_collectors import CRYPTO_COLLECTORS  # noqa: E402
 from collectors.dev_collectors import DEV_COLLECTORS  # noqa: E402
+from collectors.ai_collectors import AI_COLLECTORS  # noqa: E402
 
 
 class Track:
@@ -39,8 +40,8 @@ TRACKS: dict[str, Track] = {
     "ai": Track(
         key="ai",
         name="AI工具",
-        desc="AI 工具/模型/红利资讯（RSS 为主）",
-        api_collectors=[],
+        desc="AI 热门模型/应用(HuggingFace)+ 高分讨论(HN)+ 工具红利资讯(RSS)",
+        api_collectors=AI_COLLECTORS,
         rss_track="AI工具",
     ),
     "dev": Track(

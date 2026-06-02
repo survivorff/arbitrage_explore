@@ -21,7 +21,6 @@ SEED_SOURCES: list[tuple[str, str, str, int, int]] = [
     ("DeepMind Blog", "rss", "https://deepmind.google/blog/rss.xml", 1, 3),
     # ---- 社区/产品发现（新工具首发地）----
     ("Hacker News (front)", "rss", "https://hnrss.org/frontpage", 2, 2),
-    ("Hacker News: AI", "rss", "https://hnrss.org/newest?q=AI&points=50", 2, 2),
     ("Product Hunt", "rss", "https://www.producthunt.com/feed", 2, 2),
     # ---- 关键人物 / 优质分析（接近一手的判断）----
     ("Simon Willison", "rss", "https://simonwillison.net/atom/everything/", 2, 3),

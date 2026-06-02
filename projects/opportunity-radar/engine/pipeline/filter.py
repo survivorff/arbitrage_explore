@@ -119,14 +119,27 @@ def _classify_data_signal(sig: dict) -> tuple[int, int, float]:
             # GitHub 新晋项目：用 star 数分级
             stars = abs(val)
             if stars >= 1000:
-                return 4, 0, 0.9    # 现象级新项目，值得马上看
+                return 4, 0, 0.9
             if stars >= 300:
-                return 3, 0, 0.75   # 值得评估
+                return 3, 0, 0.75
             return 2, 0, 0.6
-        return 2, 0, 0.6            # 加密趋势币等，更多是背景
+        if label == "Likes":
+            # HuggingFace 热门模型/应用：用 likes 分级
+            likes = abs(val)
+            if likes >= 300:
+                return 4, 0, 0.9    # 现象级热门
+            if likes >= 80:
+                return 3, 0, 0.75
+            return 2, 0, 0.6
+        if "涨幅" in label:
+            # 热点板块：涨幅越大越值得关注（但热点轮动快）
+            chg = abs(val)
+            if chg >= 20:
+                return 3, 0, 0.8    # 强热点，待评估（追高有险）
+            return 2, 0, 0.65
+        return 2, 0, 0.6            # 其他趋势（加密趋势币等）
 
     if sig_type == "listing":
-        # 新协议/新上线：早期线索，归 L3 待评估（有空投预期但需尽调）
         return 3, 0, 0.7
 
     return 3, 0, 0.7
