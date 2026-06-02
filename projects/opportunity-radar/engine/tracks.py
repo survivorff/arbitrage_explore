@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from collectors.crypto_collectors import CRYPTO_COLLECTORS  # noqa: E402
+from collectors.dev_collectors import DEV_COLLECTORS  # noqa: E402
 
 
 class Track:
@@ -33,7 +34,7 @@ TRACKS: dict[str, Track] = {
         name="加密Web3",
         desc="链上收益率、资金费率、趋势、新币上线等一手数据机会（API 为主）",
         api_collectors=CRYPTO_COLLECTORS,
-        rss_track="加密Web3",   # 也可叠加加密资讯 RSS（见 sources_seed_crypto）
+        rss_track="加密Web3",
     ),
     "ai": Track(
         key="ai",
@@ -41,6 +42,13 @@ TRACKS: dict[str, Track] = {
         desc="AI 工具/模型/红利资讯（RSS 为主）",
         api_collectors=[],
         rss_track="AI工具",
+    ),
+    "dev": Track(
+        key="dev",
+        name="开发者开源",
+        desc="GitHub 新晋爆款开源项目 + 技术社区一手讨论（API + 社区 RSS）",
+        api_collectors=DEV_COLLECTORS,
+        rss_track="开发者开源",
     ),
 }
 

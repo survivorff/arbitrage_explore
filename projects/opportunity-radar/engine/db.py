@@ -31,12 +31,15 @@ CREATE TABLE IF NOT EXISTS signals (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     source_id    INTEGER REFERENCES sources(id),
     track        TEXT,                          -- 所属赛道（AI工具/加密Web3…）
-    signal_type  TEXT DEFAULT 'news',           -- news/yield/funding/trending/listing
+    signal_type  TEXT DEFAULT 'news',           -- news/yield/funding/trending/listing/policy/community
     raw_title    TEXT,
     raw_content  TEXT,
     url          TEXT,
     metric_value REAL,                          -- 关键数字（如 APY、资金费率年化）
     metric_label TEXT,                          -- 数字含义（如 "APY %"）
+    -- 机会分级（见 build/06-机会的定义.md）
+    level        INTEGER DEFAULT 0,             -- 0未分级 / 1噪音 / 2背景 / 3待评估 / 4即时可行动
+    scam_flag    INTEGER DEFAULT 0,             -- 1=疑似骗局/异常，需人工警惕
     hash         TEXT UNIQUE,                   -- 去重
     published    TEXT,                          -- 源给的发布时间
     ai_tags      TEXT,                          -- AI 初筛标签(JSON)
@@ -101,9 +104,15 @@ def session() -> Iterator[sqlite3.Connection]:
 
 
 def init_db() -> None:
-    """创建表（幂等）。"""
+    """创建表（幂等）+ 轻量列迁移。"""
     with session() as conn:
         conn.executescript(SCHEMA)
+        # 轻量迁移：为已存在的 signals 表补字段（如果是旧 DB）
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(signals)")}
+        if "level" not in cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN level INTEGER DEFAULT 0")
+        if "scam_flag" not in cols:
+            conn.execute("ALTER TABLE signals ADD COLUMN scam_flag INTEGER DEFAULT 0")
 
 
 if __name__ == "__main__":

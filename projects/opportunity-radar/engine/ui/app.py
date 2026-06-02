@@ -28,7 +28,7 @@ init_db()
 # ---------------- 数据访问 ----------------
 def fetch_signals(status: str, min_rel: float, limit: int,
                   keyword: str = "", source_id: int | None = None,
-                  track: str | None = None) -> list[dict]:
+                  track: str | None = None, level: int | None = None) -> list[dict]:
     sql = (
         "SELECT s.*, src.name AS source_name, src.layer AS source_layer "
         "FROM signals s LEFT JOIN sources src ON s.source_id = src.id "
@@ -38,13 +38,17 @@ def fetch_signals(status: str, min_rel: float, limit: int,
     if track:
         sql += " AND s.track = ?"
         params.append(track)
+    if level is not None:
+        sql += " AND COALESCE(s.level,0) = ?"
+        params.append(level)
     if keyword:
         sql += " AND (s.raw_title LIKE ? OR s.raw_content LIKE ?)"
         params += [f"%{keyword}%", f"%{keyword}%"]
     if source_id:
         sql += " AND s.source_id = ?"
         params.append(source_id)
-    sql += " ORDER BY s.ai_relevance DESC, s.fetched_at DESC LIMIT ?"
+    # 排序：等级降序（L4 优先）→ 相关度降序 → 时间倒序
+    sql += " ORDER BY COALESCE(s.level,0) DESC, s.ai_relevance DESC, s.fetched_at DESC LIMIT ?"
     params.append(limit)
     with session() as conn:
         rows = conn.execute(sql, params).fetchall()
@@ -69,10 +73,15 @@ def list_sources() -> list[dict]:
 
 def promote_signal(signal_id: int, title: str, summary: str) -> int:
     with session() as conn:
+        # 继承信号的真实赛道与维度线索，不再硬编码
+        sig = conn.execute(
+            "SELECT track, signal_type FROM signals WHERE id=?", (signal_id,)
+        ).fetchone()
+        track = (sig["track"] if sig and sig["track"] else "") or ""
         cur = conn.execute(
             """INSERT INTO opportunities (signal_id, title, track, summary, status)
                VALUES (?, ?, ?, ?, 'draft')""",
-            (signal_id, title, "AI工具", summary),
+            (signal_id, title, track, summary),
         )
         conn.execute("UPDATE signals SET status='promoted' WHERE id=?", (signal_id,))
         return cur.lastrowid
@@ -113,6 +122,9 @@ def get_counts() -> dict:
             "sources": c("SELECT COUNT(*) FROM sources WHERE enabled=1"),
             "new": c("SELECT COUNT(*) FROM signals WHERE status='new'"),
             "high": c("SELECT COUNT(*) FROM signals WHERE status='new' AND COALESCE(ai_relevance,0)>=0.4"),
+            "L4": c("SELECT COUNT(*) FROM signals WHERE status='new' AND level=4"),
+            "L3": c("SELECT COUNT(*) FROM signals WHERE status='new' AND level=3"),
+            "scam": c("SELECT COUNT(*) FROM signals WHERE status='new' AND scam_flag=1"),
             "draft": c("SELECT COUNT(*) FROM opportunities WHERE status='draft'"),
             "published": c("SELECT COUNT(*) FROM opportunities WHERE status='published'"),
             "tracking": c("SELECT COUNT(*) FROM opportunities WHERE status IN ('published','tracking')"),
@@ -164,52 +176,85 @@ def page_guide():
 
 ---
 
-👉 **现在就开始**：点左侧「🛰️ 信息源 & 扫描」，选「加密Web3」，扫描后去「📥 收件箱」。
+### 机会分四级（收件箱按等级排序，L4 最优先）
+
+| 等级 | 含义 | 例子 |
+|------|------|------|
+| 🟢 **L4** | 即时可行动 | 合理高息池(10-50% APY)、新晋爆款开源项目、限免红利 |
+| 🟡 **L3** | 待评估（需研究） | 高息但要看可持续性、新公链空投 |
+| 🔵 **L2** | 趋势/背景 | 政策、融资、趋势币 |
+| 🔴 **L1** | 噪音（已降级） | 招聘、八卦、营销稿 |
+
+> ⚠️ 极端数值（如资金费率年化 >1000%）会被标 **疑似异常/骗局**，提醒你警惕新币/低流动性的伪机会。
+
+### 目前支持 3 个赛道
+
+- **加密Web3**：DeFi 收益率、资金费率、趋势（链上 API）
+- **AI工具**：模型/工具/红利资讯（RSS）
+- **开发者开源**：GitHub 新晋爆款项目 + 技术社区讨论（GitHub API + Reddit/HN）
+
+---
+
+👉 **现在就开始**：点左侧「🛰️ 信息源 & 扫描」，选一个赛道扫描，再去「📥 收件箱」。
 """)
     counts = get_counts()
     m = st.columns(4)
     m[0].metric("待评估信号", counts["new"])
-    m[1].metric("草稿机会", counts["draft"])
-    m[2].metric("已发布", counts["published"])
-    m[3].metric("启用信息源", counts["sources"])
+    m[1].metric("🟢 L4 即时可行动", counts["L4"])
+    m[2].metric("🟡 L3 待评估", counts["L3"])
+    m[3].metric("⚠️ 异常预警", counts["scam"])
 
 
 def page_inbox():
     st.header("📥 收件箱 · 待评估信号")
     st.info(
-        "**这一步做什么**：机器已从各数据源采集信号并按相关度排序。"
-        "你的任务是**快速扫一眼，把值得做成机会的点「⬆️晋升」，没用的「🗑️过滤」**。"
-        "判断由你做——这正是产品的核心价值。", icon="💡"
+        "**这一步做什么**：机器已采集信号并按相关度+机会等级排序。"
+        "你的任务是**快速扫一眼，把值得做成机会的点「⬆️晋升」，没用的「🗑️过滤」**。",
+        icon="💡"
     )
 
     tracks = list_tracks_in_db()
     track_map = {"全部赛道": None} | {t: t for t in tracks}
-    cT = st.columns([2, 2, 2, 3, 2])
+    cT = st.columns([2, 2, 2, 2, 3, 2])
     track_pick = cT[0].selectbox("🎯 赛道", list(track_map.keys()))
-    min_rel = cT[1].slider("最低相关度", 0.0, 1.0, 0.4, 0.1)
-    limit = cT[2].selectbox("显示数量", [20, 50, 100, 200], index=0)
-    keyword = cT[3].text_input("🔎 关键词", "", placeholder="如：APY / 空投 / 免费 / 资金费率")
+    level_filter = cT[1].selectbox(
+        "🏷️ 机会等级",
+        ["全部", "🟢 L4 即时可行动", "🟡 L3 待评估", "🔵 L2 背景", "🔴 L1 噪音"],
+    )
+    min_rel = cT[2].slider("最低相关度", 0.0, 1.0, 0.4, 0.1)
+    limit = cT[3].selectbox("显示数量", [20, 50, 100, 200], index=0)
+    keyword = cT[4].text_input("🔎 关键词", "", placeholder="如：APY / 空投 / 免费 / 资金费率")
     sources = list_sources()
     src_map = {"全部来源": None} | {s["name"]: s["id"] for s in sources}
-    src_pick = cT[4].selectbox("来源", list(src_map.keys()))
+    src_pick = cT[5].selectbox("来源", list(src_map.keys()))
 
-    signals = fetch_signals("new", min_rel, limit, keyword.strip(), src_map[src_pick], track_map[track_pick])
+    level_map = {"🟢 L4 即时可行动": 4, "🟡 L3 待评估": 3, "🔵 L2 背景": 2, "🔴 L1 噪音": 1}
+    level_v = level_map.get(level_filter)
+
+    signals = fetch_signals(
+        "new", min_rel, limit, keyword.strip(),
+        src_map[src_pick], track_map[track_pick], level=level_v,
+    )
     st.caption(f"当前命中 {len(signals)} 条 · 收件箱待评估总数 {get_counts()['new']}")
     if not signals:
-        st.warning("没有符合条件的信号。去「🛰️ 信息源 & 扫描」选赛道扫描，或放宽筛选条件。")
+        st.warning("没有符合条件的信号。去「🛰️ 信息源 & 扫描」选赛道扫描，或放宽筛选。")
         return
 
     type_icon = {"yield": "💰", "funding": "📈", "trending": "🔥", "listing": "🆕", "news": "📰"}
+    level_icon = {4: "🟢", 3: "🟡", 2: "🔵", 1: "🔴", 0: "⚪"}
     for s in signals:
         rel = s.get("ai_relevance") or 0
         sig_type = s.get("signal_type") or "news"
         icon = type_icon.get(sig_type, "📄")
+        level = s.get("level") or 0
+        lvl_icon = level_icon.get(level, "⚪")
+        scam = s.get("scam_flag") or 0
         published = (s.get("published") or "")[:16]
         with st.container(border=True):
             top = st.columns([6, 1])
-            top[0].markdown(f"{icon} **{s['raw_title']}**")
+            scam_badge = " ⚠️ **疑似异常/骗局**" if scam else ""
+            top[0].markdown(f"{lvl_icon} L{level} · {icon} **{s['raw_title']}**{scam_badge}")
             top[1].markdown(f"`{rel:.2f}`")
-            # 关键数字（加密机会的核心）
             if s.get("metric_value") is not None and s.get("metric_label"):
                 st.markdown(f"**📊 {s['metric_label']}: `{s['metric_value']:.2f}`**")
             meta = f"赛道: {s.get('track','-')} · 来源: {s.get('source_name','?')} (L{s.get('source_layer','?')})"
@@ -259,7 +304,11 @@ def page_opportunities():
             index=scorer.ARBITRAGE_DIMENSIONS.index(o["dimension"])
             if o.get("dimension") in scorer.ARBITRAGE_DIMENSIONS else 2,
         )
-        half_life = c2.selectbox("时效/半衰期", scorer.HALF_LIFE_OPTIONS)
+        half_life = c2.selectbox(
+            "时效/半衰期", scorer.HALF_LIFE_OPTIONS,
+            index=scorer.HALF_LIFE_OPTIONS.index(o["half_life"])
+            if o.get("half_life") in scorer.HALF_LIFE_OPTIONS else 0,
+        )
         summary = st.text_area("一句话是什么", o.get("summary") or "", height=68)
         why = st.text_area("为什么值得关注（价差/机会在哪）", o.get("why_matters") or "", height=80)
         risks = st.text_area("⚠️ 风险与坑（必填）", o.get("risks") or "", height=80)
@@ -274,7 +323,11 @@ def page_opportunities():
 
         st.subheader("结论")
         c3, c4 = st.columns(2)
-        judgment = c3.selectbox("我的判断", scorer.JUDGMENT_OPTIONS)
+        judgment = c3.selectbox(
+            "我的判断", scorer.JUDGMENT_OPTIONS,
+            index=scorer.JUDGMENT_OPTIONS.index(o["judgment"])
+            if o.get("judgment") in scorer.JUDGMENT_OPTIONS else 0,
+        )
         disclosure = c4.text_input("利益披露", o.get("disclosure") or "无")
         judgment_reason = st.text_area("判断理由", o.get("judgment_reason") or "", height=68)
 
@@ -288,15 +341,17 @@ def page_opportunities():
             }
             update_opportunity(o["id"], fields)
             st.success("已保存。")
+            st.rerun()
 
-    # 实时显示框架结论
-    current = {f: o.get(f, 1) for f, *_ in [(d[0],) for d in scorer.DIMENSIONS]}
-    total = scorer.weighted_total({k: st.session_state.get(f"{k}_{o['id']}", current.get(k, 1)) for k in current})
-    dec, why_dec = scorer.decision({k: st.session_state.get(f"{k}_{o['id']}", 1) for k in current})
+    # 框架结论（基于已保存到数据库的分数）
+    saved_scores = {f: (o.get(f) or 0) for f, *_ in scorer.DIMENSIONS}
+    total = scorer.weighted_total(saved_scores)
+    dec, why_dec = scorer.decision(saved_scores)
     m = st.columns(3)
-    m[0].metric("加权总分", f"{total}/{scorer.MAX_TOTAL}")
+    m[0].metric("加权总分(已保存)", f"{total}/{scorer.MAX_TOTAL}")
     m[1].metric("框架建议", dec)
     m[2].caption(why_dec)
+    st.caption("提示：调整滑块后需点「💾 保存评估」，结论才会更新。")
 
     st.divider()
     cols = st.columns(3)
@@ -313,24 +368,32 @@ def page_track():
     st.header("📈 战绩追踪 · 诚实记录")
     st.caption("给已发布机会回填实际结果。记录命中和看错——这是你最重要的信任资产。")
 
-    opps = fetch_opportunities("published") + fetch_opportunities("tracking")
+    opps = (fetch_opportunities("published")
+            + fetch_opportunities("tracking")
+            + fetch_opportunities("reviewed"))
     if not opps:
         st.info("还没有已发布的机会。先在「机会卡片」里评估并发布。")
         return
+
+    HIT_OPTIONS = ["未判定", "hit(命中)", "miss(看错)", "neutral(中性)"]
+    HIT_VAL = {"hit(命中)": "hit", "miss(看错)": "miss", "neutral(中性)": "neutral"}
+    HIT_REVERSE = {v: k for k, v in HIT_VAL.items()}
 
     for o in opps:
         with st.container(border=True):
             st.markdown(f"**#{o['id']} {o['title']}**　· 判断: {o.get('judgment','-')} · 发布于 {o.get('published_at','-')}")
             c = st.columns([3, 1])
             outcome = c[0].text_input("实际结果", o.get("outcome") or "", key=f"out_{o['id']}")
+            saved_hit = HIT_REVERSE.get(o.get("outcome_hit") or "", "未判定")
             hit = c[1].selectbox(
-                "命中?", ["未判定", "hit(命中)", "miss(看错)", "neutral(中性)"],
+                "命中?", HIT_OPTIONS, index=HIT_OPTIONS.index(saved_hit),
                 key=f"hit_{o['id']}",
             )
             if st.button("保存", key=f"savetrack_{o['id']}"):
-                hit_val = {"hit(命中)": "hit", "miss(看错)": "miss", "neutral(中性)": "neutral"}.get(hit)
+                hit_val = HIT_VAL.get(hit)
                 update_opportunity(o["id"], {
-                    "outcome": outcome, "outcome_hit": hit_val, "status": "reviewed" if hit_val else "tracking",
+                    "outcome": outcome, "outcome_hit": hit_val,
+                    "status": "reviewed" if hit_val else "tracking",
                 })
                 st.success("已保存。")
                 st.rerun()
@@ -356,8 +419,8 @@ def page_sources():
     m = st.columns(4)
     m[0].metric("启用信息源", counts["sources"])
     m[1].metric("待评估信号", counts["new"])
-    m[2].metric("高相关", counts["high"])
-    m[3].metric("机会卡片(草稿)", counts["draft"])
+    m[2].metric("🟢 L4 即时可行动", counts["L4"])
+    m[3].metric("⚠️ 异常预警", counts["scam"])
 
     st.divider()
     st.subheader("① 选赛道扫描")
@@ -416,10 +479,13 @@ def _now() -> str:
 def build_briefing(opps: list[dict]) -> str:
     """把机会卡片渲染成 Markdown 简报（对应 templates/每周简报.md 结构）。"""
     from datetime import date
+    # 自动汇总赛道（不再硬编码）
+    tracks_in = sorted({(o.get("track") or "未分类") for o in opps})
+    track_label = " / ".join(tracks_in) if tracks_in else "未分类"
     lines: list[str] = []
     lines.append(f"# 机会雷达 · 简报（{date.today().isoformat()}）")
     lines.append("")
-    lines.append(f"> 本期覆盖赛道：AI工具 · 精选机会 {len(opps)} 个。")
+    lines.append(f"> 本期覆盖赛道：{track_label} · 精选机会 {len(opps)} 个。")
     lines.append("")
     lines.append("## 📋 本期速览（30秒版）")
     lines.append("")
@@ -473,11 +539,13 @@ def page_briefing():
         st.info("还没有机会卡片可生成简报。先去「收件箱」晋升、在「机会卡片」评估。")
         return
 
+    # 用 id 做标签的稳定唯一键，避免标题截断重复导致条目互相覆盖
     label = {f"#{o['id']} {o['title'][:40]} [{o.get('status')}]": o for o in pool}
+    published_ids = {o["id"] for o in published}
     picked = st.multiselect(
         "选择要纳入简报的机会（默认选中已发布/已评估的）",
         list(label.keys()),
-        default=[k for k, o in label.items() if o in published],
+        default=[k for k, o in label.items() if o["id"] in published_ids],
     )
     chosen = [label[k] for k in picked]
     if not chosen:

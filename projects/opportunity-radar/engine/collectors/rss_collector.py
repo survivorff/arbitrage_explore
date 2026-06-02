@@ -46,9 +46,15 @@ def _published(entry) -> str | None:
 
 def collect_one(conn, source: dict) -> tuple[int, int]:
     """采集单个源，返回 (新增, 跳过)。"""
+    # 某些源（如 Reddit）拒绝默认 UA，需要更"真实"的 UA
+    name = (source.get("name") or "").lower()
+    if "reddit" in name:
+        ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    else:
+        ua = config.USER_AGENT
     parsed = feedparser.parse(
         source["url"],
-        request_headers={"User-Agent": config.USER_AGENT},
+        request_headers={"User-Agent": ua},
     )
     inserted, skipped = 0, 0
     entries = parsed.entries[: config.FETCH_LIMIT]

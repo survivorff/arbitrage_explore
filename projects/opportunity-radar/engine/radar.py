@@ -48,6 +48,10 @@ def cmd_setup(track_key: str) -> None:
         from sources_seed_crypto import seed
         seed()
         print("加密赛道的 API 数据源（收益率/资金费率/趋势）无需预置，scan 时自动采集。")
+    elif track_key == "dev":
+        from sources_seed_dev import seed
+        seed()
+        print("开发者赛道的 GitHub API 数据源无需预置，scan 时自动采集。")
     else:
         print(f"未知赛道 {track_key}，可用：{[t.key for t in list_tracks()]}")
         return
@@ -82,7 +86,7 @@ def _scan_track(track_key: str) -> None:
     # 3. 规则初筛
     from pipeline.filter import run_rule_filter
     f = run_rule_filter(only_new=True, track=track.name)
-    print(f"  [初筛] 处理 {f['processed']} / 高相关 {f['high']}")
+    print(f"  [初筛] 处理 {f['processed']} | L4 {f.get('L4',0)} L3 {f.get('L3',0)} L2 {f.get('L2',0)} L1 {f.get('L1',0)} ⚠️骗局 {f.get('scam',0)}")
 
     # 4. AI 打标（可选）
     from config import config
