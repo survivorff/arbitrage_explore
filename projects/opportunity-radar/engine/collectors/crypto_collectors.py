@@ -266,6 +266,13 @@ class CoinGeckoHotCategories(Collector):
 CRYPTO_COLLECTORS = [DefiLlamaYields, BinanceFunding, CoinGeckoTrending,
                      DefiLlamaNewProtocols, CoinGeckoHotCategories]
 
+# 合并"一手热点"采集器（上币公告/链上趋势），并把它们排在最前（优先级最高）
+try:
+    from collectors.crypto_alpha import CRYPTO_ALPHA_COLLECTORS
+    CRYPTO_COLLECTORS = CRYPTO_ALPHA_COLLECTORS + CRYPTO_COLLECTORS
+except Exception:
+    pass
+
 
 if __name__ == "__main__":
     from db import init_db

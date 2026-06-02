@@ -80,8 +80,11 @@ Telegram 配置（`.env`）：`RADAR_TG_ENABLED=true` + `RADAR_TG_BOT_TOKEN` + `
 
 | 赛道 | 机会形态 | 数据源类型 | 采集器 |
 |------|---------|-----------|--------|
-| **加密Web3** | APY/资金费率/趋势（带数字的量化机会） | **数据 API** | DeFiLlama、Binance、CoinGecko + 加密资讯RSS |
-| **AI工具** | 新工具/限免/降价（文章发布） | 资讯 RSS | 厂商博客、社区、媒体 |
+| **加密Web3** | **一手热点**(上币/空投/链上爆拉)+ 量化套利(收益率/资金费率) | **数据 API** | 币安公告、GeckoTerminal趋势、DeFiLlama、Binance、CoinGecko |
+| **AI工具** | 热门模型/应用 + 工具红利 | API + RSS | HuggingFace、HN、厂商博客/媒体 |
+| **开发者开源** | GitHub 新晋爆款 + 社区讨论 | API + RSS | GitHub、Reddit、HN |
+
+加密一手热点(信息差最强)：币安上币公告、HODLer 空投、链上实时爆拉的币——见 `collectors/crypto_alpha.py`。
 
 新增赛道：在 `tracks.py` 注册一个 `Track`，声明它的采集器即可。
 

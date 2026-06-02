@@ -90,6 +90,21 @@ def _classify_data_signal(sig: dict) -> tuple[int, int, float]:
     """
     sig_type = sig.get("signal_type")
     val = sig.get("metric_value")
+
+    # listing 类（币安公告/新协议）可能没有 metric_value，先处理
+    if sig_type == "listing":
+        label = sig.get("metric_label") or ""
+        title = (sig.get("raw_title") or "")
+        if label == "币安公告":
+            if "上币" in title or "空投" in title:
+                return 4, 0, 0.95    # 上币/空投=最强信息差
+            if "下架" in title:
+                return 3, 0, 0.7
+            if "合约上新" in title:
+                return 4, 0, 0.85
+            return 3, 0, 0.7
+        return 3, 0, 0.7             # 新协议（DefiLlama）
+
     if val is None:
         return 3, 0, 0.6
 
@@ -132,15 +147,20 @@ def _classify_data_signal(sig: dict) -> tuple[int, int, float]:
                 return 3, 0, 0.75
             return 2, 0, 0.6
         if "涨幅" in label:
-            # 热点板块：涨幅越大越值得关注（但热点轮动快）
+            # 板块/链上涨幅：涨幅越大越热
             chg = abs(val)
+            if "链上" in label:
+                # 链上单池热点：极强信号但高风险
+                if chg >= 50:
+                    return 4, 0, 0.92   # 爆拉，最热一手
+                if chg >= 15:
+                    return 3, 0, 0.8
+                return 2, 0, 0.65
+            # 板块叙事
             if chg >= 20:
-                return 3, 0, 0.8    # 强热点，待评估（追高有险）
+                return 3, 0, 0.8
             return 2, 0, 0.65
         return 2, 0, 0.6            # 其他趋势（加密趋势币等）
-
-    if sig_type == "listing":
-        return 3, 0, 0.7
 
     return 3, 0, 0.7
 

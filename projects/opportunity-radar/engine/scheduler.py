@@ -84,7 +84,15 @@ def _push_new_l4(after_id: int, max_push_per_track: int = 8) -> int:
                 """SELECT * FROM signals
                    WHERE id > ? AND track = ? AND level = 4
                      AND COALESCE(scam_flag,0) = 0 AND status='new'
-                   ORDER BY ai_relevance DESC LIMIT ?""",
+                   ORDER BY
+                     CASE signal_type
+                       WHEN 'listing' THEN 1   -- 上币/空投/新协议（一手，最优先）
+                       WHEN 'trending' THEN 2  -- 链上热点/叙事
+                       WHEN 'funding' THEN 3
+                       WHEN 'yield' THEN 4
+                       ELSE 5 END,
+                     ai_relevance DESC
+                   LIMIT ?""",
                 (after_id, track, max_push_per_track),
             ).fetchall()
             signals = [dict(r) for r in rows]
